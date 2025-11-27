@@ -257,9 +257,9 @@ class ACLMigrationTool:
             """检查用户名或组名是否有效"""
             if not name or name.isdigit():
                 return False
-            # 检查是否包含特殊字符
+            # 检查是否包含特殊字符，允许@符号用于域名格式的用户名
             import string
-            valid_chars = string.ascii_letters + string.digits + '_-'
+            valid_chars = string.ascii_letters + string.digits + '_-@.'
             return all(c in valid_chars for c in name)
         
         # 只处理扩展ACL，不处理文件所有者和组所有者
