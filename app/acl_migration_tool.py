@@ -25,7 +25,7 @@ class ACLMigrationTool:
     def __init__(self, source_dir: str, dest_dir: str, log_dir: str = "logs",
                  db_path: str = None, workers: int = 4, incremental: bool = False, 
                  migrate_ownership: bool = False, background: bool = False, debug: bool = False,
-                 domain: str = None):
+                 domain: str = None, folder_only: bool = False):
         self.source_dir = Path(source_dir).resolve()
         self.dest_dir = Path(dest_dir).resolve()
         self.log_dir = Path(log_dir)
@@ -35,6 +35,7 @@ class ACLMigrationTool:
         self.background = background
         self.debug = debug
         self.domain = domain
+        self.folder_only = folder_only
         
         # 创建日志目录
         self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -313,13 +314,42 @@ class ACLMigrationTool:
                     self.logger.error(f"无效的NFSv4 ACL格式: {acl}")
                     return False
             
-            # 不清除现有ACL，直接添加新的ACL条目
-            return self._apply_acl_individually(file_path, nfs4_acls)
-                    
-            return True
+            # 使用-s选项替换整个ACL，避免重复
+            return self._set_acl_replace(file_path, nfs4_acls)
             
         except Exception as e:
             self.logger.error(f"应用 NFSv4 ACL 异常 {file_path}: {str(e)}")
+            return False
+    
+    def _set_acl_replace(self, file_path: str, nfs4_acls: List[str]) -> bool:
+        """使用-s选项替换整个ACL"""
+        try:
+            # 添加默认的NFSv4权限条目（必须保留）
+            default_acls = [
+                'A::OWNER@:rwatTnNcCy',
+                'A:g:GROUP@:rxtncy',
+                'A::EVERYONE@:rtncy'
+            ]
+            
+            # 先迁移的ACL，再加默认ACL
+            all_acls = nfs4_acls + default_acls
+            acl_spec = ','.join(all_acls)
+            self.logger.debug(f"替换ACL: {file_path} -> {acl_spec}")
+            
+            result = subprocess.run(
+                ['nfs4_setfacl', '-s', acl_spec, file_path],
+                capture_output=True,
+                text=True
+            )
+            
+            if result.returncode != 0:
+                self.logger.error(f"设置ACL失败 {file_path}: {result.stderr.strip()}")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"设置ACL异帰: {str(e)}")
             return False
     
     def _validate_nfs4_acl(self, acl: str) -> bool:
@@ -330,24 +360,7 @@ class ACLMigrationTool:
         pattern = r'^[AD]:[fg]?:[^:]*:[rwaDxtTnNcy]*$'
         return bool(re.match(pattern, acl))
     
-    def _apply_acl_individually(self, file_path: str, nfs4_acls: List[str]) -> bool:
-        """逐个应用ACL条目"""
-        for acl in nfs4_acls:
-            self.logger.debug(f"单独应用ACL: {acl} 到 {file_path}")
-            
-            result = subprocess.run(
-                ['nfs4_setfacl', '-a', acl, file_path],
-                capture_output=True,
-                text=True
-            )
-            
-            if result.returncode != 0:
-                error_msg = result.stderr.strip()
-                self.logger.error(f"应用 NFSv4 ACL 失败 {file_path}: {error_msg}")
-                self.logger.error(f"失败的ACL条目: {acl}")
-                return False
-                
-        return True
+
             
     def migrate_file_ownership(self, source_file: Path, dest_file: Path) -> bool:
         """迁移文件所有权"""
@@ -397,6 +410,9 @@ class ACLMigrationTool:
     def migrate_file_acl(self, source_file: Path) -> Tuple[str, bool, str]:
         """迁移单个文件的所有权和 ACL"""
         try:
+            # 如果启用folder_only模式，跳过非目录文件
+            if self.folder_only and not source_file.is_dir():
+                return (str(source_file), True, "跳过(非目录)")
             # 处理单文件和目录模式
             if self.source_dir.is_file():
                 # 单文件模式：直接使用目标路径
@@ -515,6 +531,8 @@ class ACLMigrationTool:
                 if "已迁移(跳过)" in message:
                     self.stats['skipped'] += 1
                     self.logger.debug(f"跳过: {file_path}")
+                elif "跳过(非目录)" in message:
+                    self.logger.debug(f"跳过非目录: {file_path}")
                 elif "无扩展ACL" in message:
                     self.stats['no_acl'] += 1
                     self.logger.debug(f"无ACL: {file_path}")
@@ -569,6 +587,7 @@ def main():
     parser.add_argument('--debug', action='store_true', help='启用调试模式')
     parser.add_argument('--domain', help='NFSv4域名后缀 (例: mpdemo1.example.com)')
     parser.add_argument('--db', help='数据库路径')
+    parser.add_argument('--folderonly', action='store_true', help='只迁移文件夹ACL')
     parser.add_argument('--reset-db', action='store_true', help='重置数据库，清除所有迁移记录')
     parser.add_argument('--show-db-stats', action='store_true', help='显示数据库统计信息')
     
@@ -613,7 +632,8 @@ def main():
         migrate_ownership=args.ownership,
         background=args.background,
         debug=args.debug,
-        domain=args.domain
+        domain=args.domain,
+        folder_only=args.folderonly
     )
     
     try:

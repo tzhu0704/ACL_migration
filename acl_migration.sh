@@ -51,6 +51,7 @@ ACL Migration Tool - POSIX ACL 到 NFSv4 ACL 迁移工具
     -w, --workers NUM       并发线程数 (默认: 4, 范围: 1-32)
     -i, --incremental       启用增量模式 (跳过已迁移的文件)
     --ownership             迁移文件所有权 (默认只迁移ACL)
+    --folderonly            只迁移文件夹ACL (跳过文件)
     -b, --background        后台运行模式 (不显示实时输出)
     --debug                 启用调试模式 (详细日志输出)
     --domain DOMAIN         NFSv4域名后缀 (例: mpdemo1.example.com)
@@ -142,6 +143,12 @@ ACL Migration Tool - POSIX ACL 到 NFSv4 ACL 迁移工具
     - 同时迁移文件所有者和组所有者
     - 需要相应的系统权限
     - 默认只迁移 ACL 权限
+
+只迁移文件夹 (--folderonly):
+    - 只处理目录，跳过所有文件
+    - 适用于只需要设置文件夹权限的场景
+    - 可以显著提高大数据集的处理速度
+    - 可与其他参数组合使用
 
 后台运行 (-b, --background):
     - 以 nohup 方式在后台运行
@@ -481,6 +488,10 @@ run_migration() {
         args+=("--ownership")
     fi
     
+    if [[ "$FOLDER_ONLY" == true ]]; then
+        args+=("--folderonly")
+    fi
+    
     if [[ "$BACKGROUND" == true ]]; then
         args+=("--background")
     fi
@@ -532,6 +543,7 @@ main() {
     WORKERS=4
     INCREMENTAL=false
     OWNERSHIP=false
+    FOLDER_ONLY=false
     BACKGROUND=false
     DEBUG=false
     DOMAIN=""
@@ -559,6 +571,10 @@ main() {
                 ;;
             --ownership)
                 OWNERSHIP=true
+                shift
+                ;;
+            --folderonly)
+                FOLDER_ONLY=true
                 shift
                 ;;
             -b|--background)
